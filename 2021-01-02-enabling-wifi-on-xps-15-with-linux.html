@@ -1,0 +1,73 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <title>Blog - Winter Orb</title>
+    <style type="text/css">
+    	p, ol, pre {
+    		max-width: 900px;
+    	}
+    	pre {
+    		overflow: scroll;
+    	}
+    </style>
+  </head>
+  <body>
+  	<header>
+      <h1>Enabling Wifi on XPS 15 with Linux</h1>
+      <p>
+      	Enabling the AX500 / QCA6390 on a Dell XPS 15 9500 running Linux. Posted 2021-01-02.
+      </p>
+    </header>
+    <h2>Summary</h2>
+    <ol>
+    	<li>Upgrade the kernel version to v5.10:
+      	<pre>
+wget -c https://kernel.ubuntu.com/~kernel-ppa/mainline/v5.10/amd64/linux-headers-5.10.0-051000_5.10.0-051000.202012132330_all.deb
+
+wget -c https://kernel.ubuntu.com/~kernel-ppa/mainline/v5.10/amd64/linux-headers-5.10.0-051000-generic_5.10.0-051000.202012132330_amd64.deb
+
+wget -c https://kernel.ubuntu.com/~kernel-ppa/mainline/v5.10/amd64/linux-image-unsigned-5.10.0-051000-generic_5.10.0-051000.202012132330_amd64.deb
+
+wget -c https://kernel.ubuntu.com/~kernel-ppa/mainline/v5.10/amd64/linux-modules-5.10.0-051000-generic_5.10.0-051000.202012132330_amd64.deb
+
+sudo dpkg -i *.deb
+      	</pre>
+      </li>
+      <li>
+      	Install the firmware:
+      	<pre>
+git clone https://github.com/kvalo/ath11k-firmware.git
+
+cd ath11k-firmware/
+
+sudo mkdir -p /lib/firmware/ath11k/QCA6390/hw2.0/
+
+sudo cp QCA6390/hw2.0/1.0.1/WLAN.HST.1.0.1-01740-QCAHSTSWPLZ_V2_TO_X86-1/*.bin /lib/firmware/ath11k/QCA6390/hw2.0/
+
+sudo cp QCA6390/hw2.0/board-2.bin /lib/firmware/ath11k/QCA6390/hw2.0/
+      	</pre>
+      </li>
+      <li>Reboot and cross your fingers.</li>
+    </ol>
+    <h2>Background</h2>
+    <p>
+    	I recently purchased a <a href="https://en.wikipedia.org/wiki/Dell_XPS">Dell XPS</a> 15 9500 laptop to act as my principal personal machine, and immediately replaced the bundled Windows OS with <a href="https://linuxmint.com/edition.php?id=281">Linux Mint 20</a>. Everything about the install went pretty smoothly, with the exception of the WiFi, which seemed non-existent, with absolutely no indication that a wireless card was installed.
+    </p>
+    <p>
+    	Luckily, I was able to quickly get hold of a <a href="https://www.amazon.co.uk/gp/product/B077KXY71Q">USB C to ethernet adaptor</a>, which worked without any configuration, and start working out the fix.
+    </p>
+    <h2>Finding the Fix</h2>
+    <p>
+    	My orders details specified "Killer Wi-fi 6 AX500-DBS (2x2) and Bluetooth 5.0". Interestingly, it seems that a different WiFi card is used in the different <a href="https://www.dell.com/en-ie/shop/laptops/xps-15-9500-laptop/spd/xps-15-9500-laptop">available configurations</a> - some other configurations using the AX1650.
+    </p>
+    <p>
+    	Some early <a href="https://www.delltechnologies.com/en-us/corporate/newsroom/presskit/ces2020-presskit.htm">press releases</a> link to <a href="https://app.box.com/s/c2bu6ww9nao5crtctibwi2g50w4ee1v2/file/588557813483">tech specs</a> for the XPS 13 - stating that the AX1650 is "built on Intel chipset", with the AX500 "built on Qualcomm 6390 chipset". Some more evidence of this can be found by looking at the Windows drivers for the AX500, as mentioned in this <a href="https://old.reddit.com/r/Dell/comments/ihae8h/ax_500_vs_ax1650_wifi_card_in_xps/g75zi8n/">Reddit post</a>. The "Killer" product line is built by Rivet Networks, who were once owned by Qualcomm but have recently been acquired by Intel (see <a href="https://www.anandtech.com/show/15809/intel-acquires-rivet-networks-killer-networking-is-all-in-for-team-blue">here</a> and <a href="https://newsroom.intel.com/editorials/intel-acquisition-may-2020">here</a>), likely prompting a migration from Qualcomm to Intel chipsets.
+    </p>
+    <p>
+    	Armed with the correct model numbers, a search quickly yielded <a href="https://www.spinics.net/lists/linux-wireless/msg205031.html">some instructions</a>. "ath11k" is the driver for Qualcomm (or Qualcomm Atheros, hence the "ath") 802.11ax devices, and is maintained by Kalle Valo. You can find more information <a href="https://wireless.wiki.kernel.org/en/users/Drivers/ath11k">here</a>. In short, v5.10 of the Linux kernel is required for support of the QCA6390 chip.
+    </p>
+    <p>
+    	As of writing, v5.10 has been released, so my upgrade path was pretty straightforward. I grabbed the kernel packages and the specific files I needed from the driver as detailed at the top of this page, rebooted, and was immediately greeted by a wireless networks menu - success.
+    </p>
+  </body>
+</html>
