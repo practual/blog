@@ -15,12 +15,12 @@
   	<header>
       <h1>Enabling Wifi on XPS 15 with Linux</h1>
       <p>
-      	Enabling the AX500 / QCA6390 on a Dell XPS 15 9500 running Linux. Posted 2021-01-02.
+      	Enabling the AX500 / QCA6390 on a Dell XPS 15 9500 running Linux. Posted 2021-01-02, updated 2021-01-05.
       </p>
     </header>
     <h2>Summary</h2>
     <ol>
-    	<li>Upgrade the kernel version to v5.10:
+    	<li>Upgrade the kernel version to at least v5.10:
       	<pre>
 wget -c https://kernel.ubuntu.com/~kernel-ppa/mainline/v5.10/amd64/linux-headers-5.10.0-051000_5.10.0-051000.202012132330_all.deb
 
@@ -36,18 +36,16 @@ sudo dpkg -i *.deb
       <li>
       	Install the firmware:
       	<pre>
-git clone https://github.com/kvalo/ath11k-firmware.git
+git clone https://git.kernel.org/pub/scm/linux/kernel/git/firmware/linux-firmware.git
 
-cd ath11k-firmware/
+cd linux-firmware/ath11k/QCA6390/hw2.0/
 
 sudo mkdir -p /lib/firmware/ath11k/QCA6390/hw2.0/
 
-sudo cp QCA6390/hw2.0/1.0.1/WLAN.HST.1.0.1-01740-QCAHSTSWPLZ_V2_TO_X86-1/*.bin /lib/firmware/ath11k/QCA6390/hw2.0/
-
-sudo cp QCA6390/hw2.0/board-2.bin /lib/firmware/ath11k/QCA6390/hw2.0/
+sudo cp * /lib/firmware/ath11k/QCA6390/hw2.0/
       	</pre>
       </li>
-      <li>Reboot and cross your fingers.</li>
+      <li>Reboot and cross your fingers (some additional steps may be needed - see the edit below).</li>
     </ol>
     <h2>Background</h2>
     <p>
@@ -68,6 +66,10 @@ sudo cp QCA6390/hw2.0/board-2.bin /lib/firmware/ath11k/QCA6390/hw2.0/
     </p>
     <p>
     	As of writing, v5.10 has been released, so my upgrade path was pretty straightforward. I grabbed the kernel packages and the specific files I needed from the driver as detailed at the top of this page, rebooted, and was immediately greeted by a wireless networks menu - success.
+    </p>
+    <h2>Edit 2021-01-05</h2>
+    <p>
+      I have since had an instance of the wireless network displaying as "unavailable" (which is different to the original issue of it just not appearing at all). After reading a similar sounding <a href="https://bugs.launchpad.net/ubuntu/+source/linux/+bug/1879633">bug report</a>, I fiddled around with <code>modprobe -r -f ath11k_pci && modprobe ath11k_pci</code> and a few reboots, which eventually worked to restore the wifi, but I cannot say for certain what the minimum fix is. Clearly some improvements are still needed to the firmware.
     </p>
   </body>
 </html>
