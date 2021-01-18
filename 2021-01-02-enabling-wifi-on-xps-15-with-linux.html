@@ -15,7 +15,7 @@
   	<header>
       <h1>Enabling Wifi on XPS 15 with Linux</h1>
       <p>
-      	Enabling the AX500 / QCA6390 on a Dell XPS 15 9500 running Linux. Posted 2021-01-02, updated 2021-01-05.
+      	Enabling the AX500 / QCA6390 on a Dell XPS 15 9500 running Linux. Posted 2021-01-02, updated 2021-01-18.
       </p>
     </header>
     <h2>Summary</h2>
@@ -34,7 +34,7 @@ sudo dpkg -i *.deb
       	</pre>
       </li>
       <li>
-      	Install the firmware:
+      	Install the firmware (note, this is now available in <code>linux-firmware v1.187.7</code>, likely available via your update manager):
       	<pre>
 git clone https://git.kernel.org/pub/scm/linux/kernel/git/firmware/linux-firmware.git
 
@@ -67,9 +67,9 @@ sudo cp * /lib/firmware/ath11k/QCA6390/hw2.0/
     <p>
     	As of writing, v5.10 has been released, so my upgrade path was pretty straightforward. I grabbed the kernel packages and the specific files I needed from the driver as detailed at the top of this page, rebooted, and was immediately greeted by a wireless networks menu - success.
     </p>
-    <h2>Edit 2021-01-05</h2>
+    <h2>Edit 2021-01-15</h2>
     <p>
-      I have since had an instance of the wireless network displaying as "unavailable" (which is different to the original issue of it just not appearing at all). After reading a similar sounding <a href="https://bugs.launchpad.net/ubuntu/+source/linux/+bug/1879633">bug report</a>, I fiddled around with <code>modprobe -r -f ath11k_pci && modprobe ath11k_pci</code> and a few reboots, which eventually worked to restore the wifi, but I cannot say for certain what the minimum fix is. Clearly some improvements are still needed to the firmware.
+      I have since had an instance of the wireless network displaying as "unavailable" (which is different to the original issue of it just not appearing at all) after some reboots or when putting the laptop into suspend. This has so far been resolved by running a few reboot cycles. Some comments in the <a href="https://bugs.launchpad.net/ubuntu/+source/linux/+bug/1879633">Ubuntu bug report</a> suggest similar behaviour. Improvements may yet to be seen.
     </p>
   </body>
 </html>
