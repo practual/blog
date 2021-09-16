@@ -25,16 +25,19 @@
     <h2>Example problem</h2>
     <p>
       For the purposes of this discussion, the JSON array we are trying to split looks like this:
-      <pre>
+    </p>
+    <pre>
 +-------------------------------------------------------------------------------------------------------------------------------------------------------------------+
 | data                                                                                                                                                              |
 +-------------------------------------------------------------------------------------------------------------------------------------------------------------------+
 | [{"title": "Host1", "body": {"size": "24.3GB", "users": ["Barry", "Jeff"]}}, {"title": "Host2", "body": {"size": "58.6GB", "users": ["Scott", "Roger", "Dave"]}}] |
 | [{"title": "Host3", "body": {"size": "4.4GB", "users": ["Sandra", "Jeff"]}}, {"title": "Host1", "body": {"size": "58.6GB", "users": ["Pete", "Jess", "Chloe"]}}]  |
 +-------------------------------------------------------------------------------------------------------------------------------------------------------------------+
-      </pre>
-      In short, multiple rows of data, each with an array of objects which may themselves have nested object or array structures. We want our output to look like:
-      <pre>
+    </pre>
+    <p>
+    In short, multiple rows of data, each with an array of objects which may themselves have nested object or array structures. We want our output to look like:
+    </p>
+    <pre>
 +-------------------------------------------------------------------------------------+
 | output                                                                              |
 +-------------------------------------------------------------------------------------+
@@ -43,8 +46,7 @@
 | {"title": "Host3", "body": {"size": "4.4GB", "users": ["Sandra", "Jeff"]}}          |
 | {"title": "Host1", "body": {"size": "58.6GB", "users": ["Pete", "Jess", "Chloe"]}}  |
 +-------------------------------------------------------------------------------------+
-      </pre>
-    </p>
+    </pre>
     <h2>Shape of the solution</h2>
     <p>
       We'll split each row by comma. If there was no internal structure to the objects, this would be sufficient. But in general we'll have 'over split' the array. So we'll need to rebuild the objects by taking a running count of the opening and closing braces - knowing that we have a complete object every time the running count hits 0. We'll assume the output from each previous step (including the original data) is held in a temporary <code>previous_step</code> table.
