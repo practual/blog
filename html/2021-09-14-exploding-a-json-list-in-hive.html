@@ -1,0 +1,362 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <title>Blog - Winter Orb</title>
+    <style type="text/css">
+    	p, ol, pre {
+    		max-width: 900px;
+    	}
+    	pre {
+    		overflow: scroll;
+    	}
+    </style>
+  </head>
+  <body>
+  	<header>
+      <h1>Exploding a JSON array in Hive</h1>
+      <p>
+      	Turning a single JSON array/list of objects into one row per object, using Hive's SQL. Posted 2021-09-14.
+      </p>
+    </header>
+    <h2>Background</h2>
+    <p>
+      A while ago I had the need to do some data processing in a <a href="http://hive.apache.org/index.html">Hive</a>/<a href="https://hadoop.apache.org/">Hadoop</a> environment on some event data that was represented as a JSON array of objects. The built-in Hive function, <a href="https://cwiki.apache.org/confluence/display/Hive/LanguageManual+UDF#LanguageManualUDF-get_json_object"><code>get_json_object()</code></a> will happily extract a value from a JSON array but won't help us split the array into multiple rows. It gets more difficult if the objects in the array have their own nested objects, etc. We have to find someting a bit more advanced.
+    </p>
+    <h2>Example problem</h2>
+    <p>
+      For the purposes of this discussion, the JSON array we are trying to split looks like this:
+      <pre>
++-------------------------------------------------------------------------------------------------------------------------------------------------------------------+
+| data                                                                                                                                                              |
++-------------------------------------------------------------------------------------------------------------------------------------------------------------------+
+| [{"title": "Host1", "body": {"size": "24.3GB", "users": ["Barry", "Jeff"]}}, {"title": "Host2", "body": {"size": "58.6GB", "users": ["Scott", "Roger", "Dave"]}}] |
+| [{"title": "Host3", "body": {"size": "4.4GB", "users": ["Sandra", "Jeff"]}}, {"title": "Host1", "body": {"size": "58.6GB", "users": ["Pete", "Jess", "Chloe"]}}]  |
++-------------------------------------------------------------------------------------------------------------------------------------------------------------------+
+      </pre>
+      In short, multiple rows of data, each with an array of objects which may themselves have nested object or array structures. We want our output to look like:
+      <pre>
++-------------------------------------------------------------------------------------+
+| output                                                                              |
++-------------------------------------------------------------------------------------+
+| {"title": "Host1", "body": {"size": "24.3GB", "users": ["Barry", "Jeff"]}}          |
+| {"title": "Host2", "body": {"size": "58.6GB", "users": ["Scott", "Roger", "Dave"]}} |
+| {"title": "Host3", "body": {"size": "4.4GB", "users": ["Sandra", "Jeff"]}}          |
+| {"title": "Host1", "body": {"size": "58.6GB", "users": ["Pete", "Jess", "Chloe"]}}  |
++-------------------------------------------------------------------------------------+
+      </pre>
+    </p>
+    <h2>Shape of the solution</h2>
+    <p>
+      We'll split each row by comma. If there was no internal structure to the objects, this would be sufficient. But in general we'll have 'over split' the array. So we'll need to rebuild the objects by taking a running count of the opening and closing braces - knowing that we have a complete object every time the running count hits 0. We'll assume the output from each previous step (including the original data) is held in a temporary <code>previous_step</code> table.
+    </p>
+    <h2>Create a temporary ID and trim the data</h2>
+    <p>
+      First, we need to give each row an ID. If your data has a suitable ID already, you can skip this step, but we'll need something that we can use to group by in subsequent steps. We can easily just add a unique row number to achieve this. We'll also take the opportunity to trim the leading and trailing brackets.
+    </p>
+    <pre>
+SELECT
+  ROW_NUMBER() OVER () AS row_id,
+  SUBSTR(data, 2, LENGTH(data) - 2) AS trimmed_data
+FROM previous_step
+    </pre>
+    <pre>
++--------+-----------------------------------------------------------------------------------------------------------------------------------------------------------------+
+| row_id | trimmed_data                                                                                                                                                    |
++--------+-----------------------------------------------------------------------------------------------------------------------------------------------------------------+
+| 1      | {"title": "Host1", "body": {"size": "24.3GB", "users": ["Barry", "Jeff"]}}, {"title": "Host2", "body": {"size": "58.6GB", "users": ["Scott", "Roger", "Dave"]}} |
+| 2      | {"title": "Host3", "body": {"size": "4.4GB", "users": ["Sandra", "Jeff"]}}, {"title": "Host1", "body": {"size": "58.6GB", "users": ["Pete", "Jess", "Chloe"]}}  |
++--------+-----------------------------------------------------------------------------------------------------------------------------------------------------------------+
+    </pre>
+    <h2>Splitting by commas</h2>
+    <p>
+      The objects in our arrays are separated by comma, so it makes sense that we'll need to split the array string on commas. The <code>SPLIT()</code> function will split a string using a given delimeter, returning a (Hive) array. We want to get each chunk on its own row, so we'll use a <a href="https://cwiki.apache.org/confluence/display/Hive/LanguageManual+UDF#LanguageManualUDF-Built-inTable-GeneratingFunctions(UDTF)">table-generating function</a>, <code>EXPLODE()</code>. However, for the next steps we want to make sure we have consistent ordering of the chunks, so we'll use <code>POSEXPLODE()</code> to also output a positional ID for each chunk. We'll also use a <code>LATERAL VIEW</code> to attach each row of the output table back to the original <code>row_id</code>.
+    </p>
+    <pre>
+SELECT
+  trimmed_input.row_id,
+  exploded.pos,
+  exploded.chunk
+FROM previous_step
+LATERAL VIEW POSEXPLODE(SPLIT(trimmed_data, ',')) exploded AS pos, chunk
+    </pre>
+    <pre>
++--------+-----+---------------------------+
+| row_id | pos | chunk                     |
++--------+-----+---------------------------+
+| 1      | 0   | {"title": "Host1"         |
+| 1      | 1   | "body": {"size": "24.3GB" |
+| 1      | 2   | "users": ["Barry"         |
+| 1      | 3   | "Jeff"]}}                 |
+| 1      | 4   | {"title": "Host2"         |
+| 1      | 5   | "body": {"size": "58.6GB" |
+| 1      | 6   | "users": ["Scott"         |
+| 1      | 7   | "Roger"                   |
+| 1      | 8   | "Dave"]}}                 |
+| 2      | 0   | {"title": "Host3"         |
+| 2      | 1   | "body": {"size": "4.4GB"  |
+| 2      | 2   | "users": ["Sandra"        |
+| 2      | 3   | "Jeff"]}}                 |
+| 2      | 4   | {"title": "Host1"         |
+| 2      | 5   | "body": {"size": "58.6GB" |
+| 2      | 6   | "users": ["Pete"          |
+| 2      | 7   | "Jess"                    |
+| 2      | 8   | "Chloe"]}}                |
++--------+-----+---------------------------+
+    </pre>
+    <h2>Finding the object ends</h2>
+    <p>
+      We've broken the objects down too far, and now need to recombine them. But first we need to find the 'end' of each object - i.e. for each object's opening <code>{</code>, we need to find the corresponding closing <code>}</code>. To do this we'll take a running total each time we encounter a brace - counting up for opening brace and down for closing brace. We'll have found the closing brace when our running total hits 0. 
+    </p>
+    <p>
+      First we inspect each chunk and find the difference of opening and closing braces. This will help us take a running total of openings vs closing and find the final closing brace per object. We do this by removing all non-brace characters and counting what's left over.
+    </p>
+    <pre>
+SELECT
+  row_id,
+  pos,
+  chunk,
+  LENGTH(REGEXP_REPLACE(chunk, '[^{]', '')) - LENGTH(REGEXP_REPLACE(chunk, '[^}]', '')) AS brace_diff
+FROM previous_step
+    </pre>
+    <pre>
++--------+-----+---------------------------+------------+
+| row_id | pos | chunk                     | brace_diff |
++--------+-----+---------------------------+------------+
+| 1      | 0   | {"title": "Host1"         | 1          |
+| 1      | 1   | "body": {"size": "24.3GB" | 1          |
+| 1      | 2   | "users": ["Barry"         | 0          |
+| 1      | 3   | "Jeff"]}}                 | -2         |
+| 1      | 4   | {"title": "Host2"         | 1          |
+| 1      | 5   | "body": {"size": "58.6GB" | 1          |
+| 1      | 6   | "users": ["Scott"         | 0          |
+| 1      | 7   | "Roger"                   | 0          |
+| 1      | 8   | "Dave"]}}                 | -2         |
+| 2      | 0   | {"title": "Host3"         | 1          |
+| 2      | 1   | "body": {"size": "4.4GB"  | 1          |
+| 2      | 2   | "users": ["Sandra"        | 0          |
+| 2      | 3   | "Jeff"]}}                 | -2         |
+| 2      | 4   | {"title": "Host1"         | 1          |
+| 2      | 5   | "body": {"size": "58.6GB" | 1          |
+| 2      | 6   | "users": ["Pete"          | 0          |
+| 2      | 7   | "Jess"                    | 0          |
+| 2      | 8   | "Chloe"]}}                | -2         |
++--------+-----+---------------------------+------------+
+    </pre>
+    <p>
+      We can now take the running total of these bracket differences to identify the closing brace of each object - ignoring any nested objects. In Hive, <code>SUM()</code> is a <a href="https://en.wikipedia.org/wiki/Window_function_(SQL)">window function</a>, which means we can use it, per row, to sum up values from a 'window' of rows of our choice - in this case, all preceding rows. This is where the <code>row_id</code> and <code>pos</code> values come in useful, to create a partition (group) of rows for the same object, and make sure the chunks are well ordered as we take the running total.
+    </p>
+    <pre>
+SELECT
+  row_id,
+  pos,
+  chunk,
+  brace_diff,
+  SUM(brace_diff) OVER (
+    PARTITION BY row_id
+    ORDER BY pos
+    ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW
+  ) AS running_total
+FROM previous_step
+    </pre>
+    <pre>
++--------+-----+---------------------------+------------+---------------+
+| row_id | pos | chunk                     | brace_diff | running_total |
++--------+-----+---------------------------+------------+---------------+
+| 1      | 0   | {"title": "Host1"         | 1          | 1             |
+| 1      | 1   | "body": {"size": "24.3GB" | 1          | 2             |
+| 1      | 2   | "users": ["Barry"         | 0          | 2             |
+| 1      | 3   | "Jeff"]}}                 | -2         | 0             |
+| 1      | 4   | {"title": "Host2"         | 1          | 1             |
+| 1      | 5   | "body": {"size": "58.6GB" | 1          | 2             |
+| 1      | 6   | "users": ["Scott"         | 0          | 2             |
+| 1      | 7   | "Roger"                   | 0          | 2             |
+| 1      | 8   | "Dave"]}}                 | -2         | 0             |
+| 2      | 0   | {"title": "Host3"         | 1          | 1             |
+| 2      | 1   | "body": {"size": "4.4GB"  | 1          | 2             |
+| 2      | 2   | "users": ["Sandra"        | 0          | 2             |
+| 2      | 3   | "Jeff"]}}                 | -2         | 0             |
+| 2      | 4   | {"title": "Host1"         | 1          | 1             |
+| 2      | 5   | "body": {"size": "58.6GB" | 1          | 2             |
+| 2      | 6   | "users": ["Pete"          | 0          | 2             |
+| 2      | 7   | "Jess"                    | 0          | 2             |
+| 2      | 8   | "Chloe"]}}                | -2         | 0             |
++--------+-----+---------------------------+------------+---------------+
+    </pre>
+    <p>
+      We can now easily spot where each of our 'top level' objects end - when the <code>running_total</code> hits 0.
+    </p>
+    <h2>Recombining the objects</h2>
+    <p>
+      We're now in a position to recombine the objects. However, it's tricky to group them without some common value to group by. We can use a running total again to add a new ID per object, incrementing each time we hit the object's end. To simplify, we'll first introduce a column simply marking whether the chunk represents the end of an object or not.
+    </p>
+    <pre>
+SELECT
+  row_id,
+  pos,
+  chunk,
+  brace_diff,
+  running_total,
+  CASE WHEN running_total = 0 THEN 1 ELSE 0 END AS is_end
+FROM previous_step
+    </pre>
+    <pre>
++--------+-----+---------------------------+------------+---------------+--------+
+| row_id | pos | chunk                     | brace_diff | running_total | is_end |
++--------+-----+---------------------------+------------+---------------+--------+
+| 1      | 0   | {"title": "Host1"         | 1          | 1             | 0      |
+| 1      | 1   | "body": {"size": "24.3GB" | 1          | 2             | 0      |
+| 1      | 2   | "users": ["Barry"         | 0          | 2             | 0      |
+| 1      | 3   | "Jeff"]}}                 | -2         | 0             | 1      |
+| 1      | 4   | {"title": "Host2"         | 1          | 1             | 0      |
+| 1      | 5   | "body": {"size": "58.6GB" | 1          | 2             | 0      |
+| 1      | 6   | "users": ["Scott"         | 0          | 2             | 0      |
+| 1      | 7   | "Roger"                   | 0          | 2             | 0      |
+| 1      | 8   | "Dave"]}}                 | -2         | 0             | 1      |
+| 2      | 0   | {"title": "Host3"         | 1          | 1             | 0      |
+| 2      | 1   | "body": {"size": "4.4GB"  | 1          | 2             | 0      |
+| 2      | 2   | "users": ["Sandra"        | 0          | 2             | 0      |
+| 2      | 3   | "Jeff"]}}                 | -2         | 0             | 1      |
+| 2      | 4   | {"title": "Host1"         | 1          | 1             | 0      |
+| 2      | 5   | "body": {"size": "58.6GB" | 1          | 2             | 0      |
+| 2      | 6   | "users": ["Pete"          | 0          | 2             | 0      |
+| 2      | 7   | "Jess"                    | 0          | 2             | 0      |
+| 2      | 8   | "Chloe"]}}                | -2         | 0             | 1      |
++--------+-----+---------------------------+------------+---------------+--------+
+    </pre>
+    <p>
+      Now to use a running total of <code>is_end</code> values to apply a unique ID (per <code>row_id</code>) to each object. The trick here is that because the <code>is_end</code> value increments (equals 1) at the <emph>end</emph> of each object, we need to take our running totals in reverse by looking at all the rows <emph>after</emph> and including the current row.
+    </p>
+    <pre>
+SELECT
+  row_id,
+  pos,
+  chunk,
+  brace_diff,
+  running_total,
+  is_end,
+  SUM(is_end) OVER (
+    PARTITION BY row_id
+    ORDER BY pos
+    ROWS BETWEEN CURRENT ROW AND UNBOUNDED FOLLOWING
+  ) AS object_id
+FROM previous_step
+    </pre>
+    <pre>
++--------+-----+---------------------------+------------+---------------+--------+-----------+
+| row_id | pos | chunk                     | brace_diff | running_total | is_end | object_id |
++--------+-----+---------------------------+------------+---------------+--------+-----------+
+| 1      | 0   | {"title": "Host1"         | 1          | 1             | 0      | 2         |
+| 1      | 1   | "body": {"size": "24.3GB" | 1          | 2             | 0      | 2         |
+| 1      | 2   | "users": ["Barry"         | 0          | 2             | 0      | 2         |
+| 1      | 3   | "Jeff"]}}                 | -2         | 0             | 1      | 2         |
+| 1      | 4   | {"title": "Host2"         | 1          | 1             | 0      | 1         |
+| 1      | 5   | "body": {"size": "58.6GB" | 1          | 2             | 0      | 1         |
+| 1      | 6   | "users": ["Scott"         | 0          | 2             | 0      | 1         |
+| 1      | 7   | "Roger"                   | 0          | 2             | 0      | 1         |
+| 1      | 8   | "Dave"]}}                 | -2         | 0             | 1      | 1         |
+| 2      | 0   | {"title": "Host3"         | 1          | 1             | 0      | 2         |
+| 2      | 1   | "body": {"size": "4.4GB"  | 1          | 2             | 0      | 2         |
+| 2      | 2   | "users": ["Sandra"        | 0          | 2             | 0      | 2         |
+| 2      | 3   | "Jeff"]}}                 | -2         | 0             | 1      | 2         |
+| 2      | 4   | {"title": "Host1"         | 1          | 1             | 0      | 1         |
+| 2      | 5   | "body": {"size": "58.6GB" | 1          | 2             | 0      | 1         |
+| 2      | 6   | "users": ["Pete"          | 0          | 2             | 0      | 1         |
+| 2      | 7   | "Jess"                    | 0          | 2             | 0      | 1         |
+| 2      | 8   | "Chloe"]}}                | -2         | 0             | 1      | 1         |
++--------+-----+---------------------------+------------+---------------+--------+-----------+
+    </pre>
+    <p>
+      Finally we can collect each object's chunks back together again, using the <code>COLLECT_LIST()</code> function over each <code>row_id</code> / <code>object_id</code> combination, taking the opportunity to add back in the commas we split on earlier with <code>CONCAT_WS()</code>.
+    </p>
+    <pre>
+SELECT
+  row_id,
+  pos,
+  object_id,
+  chunk,
+  is_end,
+  CONCAT_WS(',', COLLECT_LIST(chunk) OVER (PARTITION BY row_id, object_id ORDER BY pos)) AS object
+FROM previous_step
+    </pre>
+    <pre>
++--------+-----+-----------+---------------------------+--------+-------------------------------------------------------------------------------------+
+| row_id | pos | object_id | chunk                     | is_end | object                                                                              | 
++--------+-----+-----------+---------------------------+--------+-------------------------------------------------------------------------------------+
+| 1      | 0   | 2         | {"title": "Host1"         | 0      | {"title": "Host1"                                                                   |
+| 1      | 1   | 2         | "body": {"size": "24.3GB" | 0      | {"title": "Host1", "body": {"size": "24.3GB"                                        |
+| 1      | 2   | 2         | "users": ["Barry"         | 0      | {"title": "Host1", "body": {"size": "24.3GB", "users": ["Barry"                     |
+| 1      | 3   | 2         | "Jeff"]}}                 | 1      | {"title": "Host1", "body": {"size": "24.3GB", "users": ["Barry", "Jeff"]}}          |
+| 1      | 4   | 1         | {"title": "Host2"         | 0      | {"title": "Host2"                                                                   |
+| 1      | 5   | 1         | "body": {"size": "58.6GB" | 0      | {"title": "Host2", "body": {"size": "58.6GB"                                        |
+| 1      | 6   | 1         | "users": ["Scott"         | 0      | {"title": "Host2", "body": {"size": "58.6GB", "users": ["Scott"                     |
+| 1      | 7   | 1         | "Roger"                   | 0      | {"title": "Host2", "body": {"size": "58.6GB", "users": ["Scott", "Roger"            |
+| 1      | 8   | 1         | "Dave"]}}                 | 1      | {"title": "Host2", "body": {"size": "58.6GB", "users": ["Scott", "Roger", "Dave"]}} |
+| 2      | 0   | 2         | {"title": "Host3"         | 0      | {"title": "Host3"                                                                   |
+| 2      | 1   | 2         | "body": {"size": "4.4GB"  | 0      | {"title": "Host3", "body": {"size": "4.4GB"                                         |
+| 2      | 2   | 2         | "users": ["Sandra"        | 0      | {"title": "Host3", "body": {"size": "4.4GB", "users": ["Sandra"                     |
+| 2      | 3   | 2         | "Jeff"]}}                 | 1      | {"title": "Host3", "body": {"size": "4.4GB", "users": ["Sandra", "Jeff"]}}          |
+| 2      | 4   | 1         | {"title": "Host1"         | 0      | {"title": "Host1"                                                                   |
+| 2      | 5   | 1         | "body": {"size": "58.6GB" | 0      | {"title": "Host1", "body": {"size": "58.6GB"                                        |
+| 2      | 6   | 1         | "users": ["Pete"          | 0      | {"title": "Host1", "body": {"size": "58.6GB", "users": ["Pete"                      |
+| 2      | 7   | 1         | "Jess"                    | 0      | {"title": "Host1", "body": {"size": "58.6GB", "users": ["Pete", "Jess"              |
+| 2      | 8   | 1         | "Chloe"]}}                | 1      | {"title": "Host1", "body": {"size": "58.6GB", "users": ["Pete", "Jess", "Chloe"]}}  |
++--------+-----+-----------+---------------------------+--------+-------------------------------------------------------------------------------------+
+    </pre>
+    <p>
+      You can see that we've got each partial object represented. We can filter on the complete objects by checking the <code>is_end</code> value.
+    </p>
+    <h2>Putting it together</h2>
+    <p>
+      In my implementation, I'm happy enough performing the above steps with a sequence of temp tables. But if you're sufficiently massochistic, or want to condense it down as much as possible to build a UDF (user-defined function), you can combine all the processing into a single statement.
+    </p>
+    <pre>
+SELECT
+  object
+FROM (
+  SELECT
+    CONCAT_WS(',', COLLECT_LIST(chunk) OVER (
+      PARTITION BY row_id, SUM(is_end) OVER (
+        PARTITION BY row_id
+        ORDER BY pos
+        ROWS BETWEEN CURRENT ROW AND UNBOUNDED FOLLOWING
+      )
+      ORDER BY pos
+    )) AS object,
+    is_end
+  FROM (
+    SELECT
+      row_id,
+      pos,
+      chunk,
+      CASE WHEN 
+        SUM(
+          LENGTH(REGEXP_REPLACE(chunk, '[^{]', '')) - LENGTH(REGEXP_REPLACE(chunk, '[^}]', ''))
+        ) OVER (
+          PARTITION BY row_id
+          ORDER BY pos
+          ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW
+        ) = 0 THEN 1 ELSE 0
+      END AS is_end
+    FROM (
+      SELECT
+        ROW_NUMBER() OVER () AS row_id,
+        SUBSTR(data, 2, LENGTH(data) - 2) AS trimmed_data
+      FROM input
+    ) x
+    LATERAL VIEW POSEXPLODE(SPLIT(trimmed_data, ',')) exploded AS pos, chunk
+  ) y
+) z
+WHERE is_end = 1
+    </pre>
+    <pre>
++-------------------------------------------------------------------------------------+
+| object                                                                              |
++-------------------------------------------------------------------------------------+
+| {"title": "Host1", "body": {"size": "24.3GB", "users": ["Barry", "Jeff"]}}          |
+| {"title": "Host2", "body": {"size": "58.6GB", "users": ["Scott", "Roger", "Dave"]}} |
+| {"title": "Host3", "body": {"size": "4.4GB", "users": ["Sandra", "Jeff"]}}          |
+| {"title": "Host1", "body": {"size": "58.6GB", "users": ["Pete", "Jess", "Chloe"]}}  |
++-------------------------------------------------------------------------------------+
+    </pre>
+  </body>
+</html>
